@@ -84,6 +84,26 @@ THREAT_CONTEXT = {
         "cve_references": [],
         "typical_response": "Block source IP, review WAF rules, check application logs for successful exploitation, patch vulnerable services",
     },
+    "ransomware_activity": {
+        "mitre_technique": "T1486 - Data Encrypted for Impact",
+        "cve_references": [],
+        "typical_response": "CRITICAL: Isolate affected systems immediately, do NOT pay ransom, restore from backups, check for lateral spread",
+    },
+    "malware_detected": {
+        "mitre_technique": "T1059 - Command and Scripting Interpreter / T1071 - Application Layer Protocol",
+        "cve_references": [],
+        "typical_response": "Isolate host, capture memory dump for forensics, check for persistence, review EDR/AV logs",
+    },
+    "mass_file_modification": {
+        "mitre_technique": "T1486 - Data Encrypted for Impact / T1565 - Data Manipulation",
+        "cve_references": [],
+        "typical_response": "CRITICAL: Possible ransomware - isolate host, stop encryption in progress, check backup integrity",
+    },
+    "data_exfiltration": {
+        "mitre_technique": "T1041 - Exfiltration Over C2 Channel / T1567 - Exfiltration Over Web Service",
+        "cve_references": [],
+        "typical_response": "Block destination IP, revoke compromised credentials, assess data scope, notify legal/PR if PII involved",
+    },
 }
 
 

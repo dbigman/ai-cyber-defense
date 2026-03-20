@@ -1,6 +1,7 @@
 """Tools for detecting threats: pattern matching, anomaly detection, threat intelligence."""
 
 import json
+import re
 from collections import Counter, defaultdict
 from langchain_core.tools import tool
 
@@ -23,6 +24,23 @@ SENSITIVE_FILE_PATTERNS = {
     "credit_card", "bank_account", "confidential", "secret", "private_key",
     "employee", "hr_records", "medical", "hipaa", "pii",
 }
+
+# Ransomware indicators
+RANSOMWARE_PATTERNS = {
+    "ransom", "decrypt", "bitcoin", "monero", "wallet", "payment",
+    "encrypted", ".locked", ".crypto", ".enc", ".crypt",
+    "readme_decrypt", "restore_files", "how_to_decrypt",
+}
+
+# Suspicious executable/service patterns
+MALWARE_PATTERNS = {
+    "cryptolocker", "wannacry", "ryuk", "lockbit", "blackcat",
+    "cobaltstrike", "meterpreter", "beacon", "shell", "backdoor",
+    "keylogger", "stealer", "miner", "rat", "trojan",
+}
+
+# Large data transfer thresholds (in MB)
+DATA_EXFIL_THRESHOLD_MB = 50  # Flag transfers > 50MB to external IPs
 
 
 @tool
@@ -216,6 +234,106 @@ def pattern_detector(events_json: str) -> str:
             ),
             "evidence_indices": [a.get("_index", -1) for a in attempts],
         })
+
+    # --- Ransomware / Malware Detection ---
+    for e in events:
+        msg = e.get("message", "").lower()
+        etype = e.get("event_type", "")
+        # Ransomware file patterns
+        if etype in ("file_modify", "file_create", "service_start"):
+            for pattern in RANSOMWARE_PATTERNS:
+                if pattern in msg:
+                    threats.append({
+                        "type": "ransomware_activity",
+                        "severity_hint": "critical",
+                        "source_ip": e.get("source_ip", ""),
+                        "user": e.get("user", ""),
+                        "pattern": pattern,
+                        "description": (
+                            f"Ransomware indicator detected: {e.get('message', '')}"
+                        ),
+                        "evidence_indices": [e.get("_index", -1)],
+                    })
+                    break
+            # Malware executable patterns
+            for pattern in MALWARE_PATTERNS:
+                if pattern in msg:
+                    threats.append({
+                        "type": "malware_detected",
+                        "severity_hint": "critical",
+                        "source_ip": e.get("source_ip", ""),
+                        "user": e.get("user", ""),
+                        "pattern": pattern,
+                        "description": (
+                            f"Malware signature '{pattern}' detected: {e.get('message', '')}"
+                        ),
+                        "evidence_indices": [e.get("_index", -1)],
+                    })
+                    break
+
+    # --- Mass File Encryption Detection ---
+    # Detect rapid file modifications (ransomware behavior)
+    file_mods_by_source = defaultdict(list)
+    for e in events:
+        if e.get("event_type") == "file_modify":
+            file_mods_by_source[e.get("source_ip", "")].append(e)
+
+    for ip, mods in file_mods_by_source.items():
+        total_files = len(mods)
+        # Also check for "X files" pattern in any message (e.g., "1,247 files modified")
+        for m in mods:
+            count_match = re.search(r"(\d[\d,]*)\s+files?", m.get("message", ""), re.IGNORECASE)
+            if count_match:
+                total_files = max(total_files, int(count_match.group(1).replace(",", "")))
+
+        if total_files >= 5:  # 5+ files modified from same source
+            msg = mods[0].get("message", "").lower()
+            # Check for encryption/mass patterns
+            if any(w in msg for w in ("encrypted", "modified", "changed", "locked", "mass", "multiple")):
+                threats.append({
+                    "type": "mass_file_modification",
+                    "severity_hint": "critical",
+                    "source_ip": ip,
+                    "user": mods[0].get("user", ""),
+                    "file_count": total_files,
+                    "description": (
+                        f"Mass file modification from {ip}: {total_files} files modified. "
+                        f"Possible ransomware: {mods[0].get('message', '')[:80]}"
+                    ),
+                    "evidence_indices": [m.get("_index", -1) for m in mods],
+                })
+
+    # --- Data Exfiltration Detection ---
+    # Large outbound data transfers to external IPs
+    for e in events:
+        if e.get("event_type") in ("network_connection", "data_transfer", "file_upload"):
+            msg = e.get("message", "")
+            dest_ip = e.get("destination_ip", "")
+            # Check if destination is external (not private ranges)
+            is_external = not (
+                dest_ip.startswith("10.") or
+                dest_ip.startswith("192.168.") or
+                dest_ip.startswith("172.") or
+                dest_ip == "10.0.1.1"  # gateway
+            )
+            if is_external and dest_ip:
+                # Look for size indicators in message (e.g., "450MB sent", "85MB uploaded")
+                size_match = re.search(r"(\d+(?:\.\d+)?)\s*MB", msg, re.IGNORECASE)
+                if size_match:
+                    size_mb = float(size_match.group(1))
+                    if size_mb >= DATA_EXFIL_THRESHOLD_MB:
+                        threats.append({
+                            "type": "data_exfiltration",
+                            "severity_hint": "critical" if dest_ip in KNOWN_MALICIOUS_IPS else "high",
+                            "source_ip": e.get("source_ip", ""),
+                            "destination_ip": dest_ip,
+                            "size_mb": size_mb,
+                            "user": e.get("user", ""),
+                            "description": (
+                                f"Large data transfer ({size_mb}MB) to external IP {dest_ip}: {msg[:100]}"
+                            ),
+                            "evidence_indices": [e.get("_index", -1)],
+                        })
 
     return json.dumps({"threats": threats, "threat_count": len(threats)})
 
