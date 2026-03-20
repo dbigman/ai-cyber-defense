@@ -106,7 +106,7 @@ def analyze_logs(file, model_name, show_reasoning):
     # Save report to temp file for download
     report_path = None
     if report and report != "No report generated.":
-        tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, prefix="incident_report_")
+        tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, prefix="incident_report_", encoding="utf-8")
         tmp.write(report)
         tmp.close()
         report_path = tmp.name
