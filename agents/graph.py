@@ -12,7 +12,7 @@ from agents.report import run_report
 
 
 def ingest_node(state: AgentState) -> AgentState:
-    model = state.get("metadata", {}).get("model_name", "gpt-4o-mini")
+    model = state.get("metadata", {}).get("model_name", "deepseek-chat")
     start = time.time()
     state = run_ingest(state, model)
     state.setdefault("metadata", {})["ingest_time"] = round(time.time() - start, 2)
@@ -20,7 +20,7 @@ def ingest_node(state: AgentState) -> AgentState:
 
 
 def detect_node(state: AgentState) -> AgentState:
-    model = state.get("metadata", {}).get("model_name", "gpt-4o-mini")
+    model = state.get("metadata", {}).get("model_name", "deepseek-chat")
     start = time.time()
     state = run_detect(state, model)
     state.setdefault("metadata", {})["detect_time"] = round(time.time() - start, 2)
@@ -28,7 +28,7 @@ def detect_node(state: AgentState) -> AgentState:
 
 
 def classify_node(state: AgentState) -> AgentState:
-    model = state.get("metadata", {}).get("model_name", "gpt-4o-mini")
+    model = state.get("metadata", {}).get("model_name", "deepseek-chat")
     start = time.time()
     state = run_classify(state, model)
     state.setdefault("metadata", {})["classify_time"] = round(time.time() - start, 2)
@@ -36,7 +36,7 @@ def classify_node(state: AgentState) -> AgentState:
 
 
 def report_node(state: AgentState) -> AgentState:
-    model = state.get("metadata", {}).get("model_name", "gpt-4o-mini")
+    model = state.get("metadata", {}).get("model_name", "deepseek-chat")
     start = time.time()
     state = run_report(state, model)
     state.setdefault("metadata", {})["report_time"] = round(time.time() - start, 2)
@@ -109,7 +109,7 @@ def build_graph() -> StateGraph:
     return graph.compile()
 
 
-def run_pipeline(logs: str, model_name: str = "gpt-4o-mini") -> AgentState:
+def run_pipeline(logs: str, model_name: str = "deepseek-chat") -> AgentState:
     """Run the full pipeline on raw log data."""
     pipeline = build_graph()
     initial_state: AgentState = {

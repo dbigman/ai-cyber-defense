@@ -5,6 +5,7 @@ import os
 import tempfile
 
 import gradio as gr
+import pandas as pd
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -13,7 +14,7 @@ load_dotenv()
 def analyze_logs(file, model_name, show_reasoning):
     """Run the pipeline on uploaded log file and return results."""
     if file is None:
-        return "No file uploaded.", "", None, "", ""
+        return "No file uploaded.", "", None, "", "", None
 
     # Read file content
     if hasattr(file, "name"):
@@ -26,17 +27,17 @@ def analyze_logs(file, model_name, show_reasoning):
         data = json.loads(logs)
         event_count = len(data) if isinstance(data, list) else 1
     except json.JSONDecodeError:
-        return "Error: Invalid JSON file.", "", None, "", ""
+        return "Error: Invalid JSON file.", "", None, "", "", None
 
-    if not os.environ.get("OPENAI_API_KEY"):
-        return "Error: OPENAI_API_KEY not set. Add it to your .env file.", "", None, "", ""
+    if not os.environ.get("DEEPSEEK_API_KEY"):
+        return "Error: DEEPSEEK_API_KEY not set. Add it to your .env file.", "", None, "", "", None
 
     from agents.graph import run_pipeline
 
     try:
         result = run_pipeline(logs, model_name=model_name)
     except Exception as e:
-        return f"Pipeline error: {e}", "", None, "", ""
+        return f"Pipeline error: {e}", "", None, "", "", None
 
     # Build severity chart data
     severity_counts = {"Critical": 0, "High": 0, "Medium": 0, "Low": 0}
@@ -54,10 +55,10 @@ def analyze_logs(file, model_name, show_reasoning):
             if hint in severity_counts:
                 severity_counts[hint] += 1
 
-    chart_data = {
+    chart_data = pd.DataFrame({
         "Severity": list(severity_counts.keys()),
         "Count": list(severity_counts.values()),
-    }
+    })
 
     # Build findings table
     findings_rows = []
@@ -115,7 +116,7 @@ def analyze_logs(file, model_name, show_reasoning):
 
 def build_dashboard():
     """Build and return the Gradio interface."""
-    with gr.Blocks(title="AI Cyber Defense Dashboard", theme=gr.themes.Soft()) as demo:
+    with gr.Blocks(title="AI Cyber Defense Dashboard") as demo:
         gr.Markdown("# AI Cyber Defense Multi-Agent System")
         gr.Markdown("Upload security logs to analyze threats using a LangGraph multi-agent pipeline.")
 
@@ -123,8 +124,8 @@ def build_dashboard():
             with gr.Column(scale=1):
                 file_input = gr.File(label="Upload Security Logs (JSON)", file_types=[".json"])
                 model_select = gr.Dropdown(
-                    choices=["gpt-4o-mini", "gpt-4o", "gpt-4-turbo"],
-                    value="gpt-4o-mini",
+                    choices=["deepseek-chat", "deepseek-reasoner"],
+                    value="deepseek-chat",
                     label="Model",
                 )
                 show_reasoning = gr.Checkbox(label="Show Agent Reasoning", value=False)
@@ -168,4 +169,4 @@ def build_dashboard():
 
 if __name__ == "__main__":
     demo = build_dashboard()
-    demo.launch(server_name="0.0.0.0", server_port=7860)
+    demo.launch(server_name="0.0.0.0", server_port=7860, theme=gr.themes.Soft())

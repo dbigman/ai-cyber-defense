@@ -14,11 +14,11 @@ def main():
     parser = argparse.ArgumentParser(description="AI Cyber Defense Multi-Agent System")
     parser.add_argument("--input", "-i", default="data/sample_security_logs.json", help="Path to security log file (JSON)")
     parser.add_argument("--output", "-o", default="output/report.md", help="Path to save the report")
-    parser.add_argument("--model", "-m", default="gpt-4o-mini", help="OpenAI model name")
+    parser.add_argument("--model", "-m", default="deepseek-chat", help="DeepSeek model name")
     args = parser.parse_args()
 
-    if not os.environ.get("OPENAI_API_KEY"):
-        print("Error: OPENAI_API_KEY not set. Copy .env.example to .env and add your key.")
+    if not os.environ.get("DEEPSEEK_API_KEY"):
+        print("Error: DEEPSEEK_API_KEY not set. Copy .env.example to .env and add your key.")
         sys.exit(1)
 
     # Read input logs
@@ -47,7 +47,7 @@ def main():
 
     # Save report
     os.makedirs(os.path.dirname(args.output), exist_ok=True)
-    with open(args.output, "w") as f:
+    with open(args.output, "w", encoding="utf-8") as f:
         f.write(result.get("report", "No report generated."))
     print(f"Report saved to {args.output}")
 

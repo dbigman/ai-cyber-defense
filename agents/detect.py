@@ -1,6 +1,7 @@
 """Detect Agent — scans normalized events for threats and anomalies."""
 
 import json
+import os
 from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
 from tools.detection_tools import pattern_detector, anomaly_detector, threat_lookup
@@ -16,8 +17,13 @@ Run ALL three detection tools on the events:
 Pass the full events JSON to each tool. Combine all results and summarize what you found."""
 
 
-def create_detect_agent(model_name: str = "gpt-4o-mini"):
-    llm = ChatOpenAI(model=model_name, temperature=0)
+def create_detect_agent(model_name: str = "deepseek-chat"):
+    llm = ChatOpenAI(
+        model=model_name,
+        temperature=0,
+        api_key=os.environ.get("DEEPSEEK_API_KEY"),
+        base_url="https://api.deepseek.com",
+    )
     return create_react_agent(
         llm,
         tools=[pattern_detector, anomaly_detector, threat_lookup],
@@ -26,35 +32,26 @@ def create_detect_agent(model_name: str = "gpt-4o-mini"):
 
 
 def run_detect(state: dict, model_name: str = "gpt-4o-mini") -> dict:
-    """Run detection on normalized events and update state with threats."""
-    agent = create_detect_agent(model_name)
+    """Run all three detection tools directly on normalized events."""
     events_json = json.dumps({"normalized_events": state["normalized_events"]})
 
-    result = agent.invoke({
-        "messages": [
-            {"role": "user", "content": f"Analyze these normalized security events for threats and anomalies:\n\n{events_json}"}
-        ]
-    })
+    # Run all 3 detectors
+    pattern_result = json.loads(pattern_detector.invoke(events_json))
+    anomaly_result = json.loads(anomaly_detector.invoke(events_json))
+    threat_result = json.loads(threat_lookup.invoke(events_json))
 
-    # Collect all threats from tool outputs
     all_threats = []
-    reasoning = ""
-    for msg in result["messages"]:
-        if hasattr(msg, "content") and isinstance(msg.content, str):
-            try:
-                data = json.loads(msg.content)
-                if "threats" in data:
-                    all_threats.extend(data["threats"])
-                if "anomalies" in data:
-                    all_threats.extend(data["anomalies"])
-                if "threat_intel_hits" in data:
-                    all_threats.extend(data["threat_intel_hits"])
-            except (json.JSONDecodeError, TypeError):
-                pass
-            if hasattr(msg, "type") and msg.type == "ai":
-                reasoning += msg.content + "\n"
+    all_threats.extend(pattern_result.get("threats", []))
+    all_threats.extend(anomaly_result.get("anomalies", []))
+    all_threats.extend(threat_result.get("threat_intel_hits", []))
+
+    reasoning = (
+        f"Pattern Detector: {pattern_result.get('threat_count', 0)} threats. "
+        f"Anomaly Detector: {anomaly_result.get('anomaly_count', 0)} anomalies. "
+        f"Threat Intel: {threat_result.get('hits_count', 0)} hits from {threat_result.get('ips_checked', 0)} IPs checked."
+    )
 
     state["threats"] = all_threats
     state["agent_reasoning"] = state.get("agent_reasoning", {})
-    state["agent_reasoning"]["detect"] = reasoning.strip()
+    state["agent_reasoning"]["detect"] = reasoning
     return state

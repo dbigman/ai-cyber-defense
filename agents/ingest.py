@@ -1,6 +1,7 @@
 """Ingest Agent — parses, validates, and normalizes security log data."""
 
 import json
+import os
 from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
 from tools.ingestion_tools import parse_log, validate_entry, normalize_data
@@ -15,8 +16,13 @@ Always run all three tools in sequence. Pass the output of each tool as input to
 Be thorough — report any parsing errors or validation issues found."""
 
 
-def create_ingest_agent(model_name: str = "gpt-4o-mini"):
-    llm = ChatOpenAI(model=model_name, temperature=0)
+def create_ingest_agent(model_name: str = "deepseek-chat"):
+    llm = ChatOpenAI(
+        model=model_name,
+        temperature=0,
+        api_key=os.environ.get("DEEPSEEK_API_KEY"),
+        base_url="https://api.deepseek.com",
+    )
     return create_react_agent(
         llm,
         tools=[parse_log, validate_entry, normalize_data],
@@ -25,32 +31,30 @@ def create_ingest_agent(model_name: str = "gpt-4o-mini"):
 
 
 def run_ingest(state: dict, model_name: str = "gpt-4o-mini") -> dict:
-    """Run the ingest agent on raw logs and update state."""
-    agent = create_ingest_agent(model_name)
+    """Run the ingest pipeline: parse → validate → normalize (deterministic tool chain)."""
+    raw_logs = state["logs"]
 
-    result = agent.invoke({
-        "messages": [
-            {"role": "user", "content": f"Parse, validate, and normalize these security logs:\n\n{state['logs']}"}
-        ]
-    })
+    # Step 1: Parse
+    parsed_result = parse_log.invoke(raw_logs)
+    parsed_data = json.loads(parsed_result)
 
-    # Extract normalized events from the agent's tool calls
-    normalized_events = []
-    reasoning = ""
-    for msg in result["messages"]:
-        if hasattr(msg, "content") and isinstance(msg.content, str):
-            # Check if this is a tool response with normalized data
-            try:
-                data = json.loads(msg.content)
-                if "normalized_events" in data:
-                    normalized_events = data["normalized_events"]
-            except (json.JSONDecodeError, TypeError):
-                pass
-            # Collect agent reasoning from non-tool messages
-            if hasattr(msg, "type") and msg.type == "ai":
-                reasoning += msg.content + "\n"
+    # Step 2: Validate
+    validated_result = validate_entry.invoke(json.dumps(parsed_data))
+    validated_data = json.loads(validated_result)
+
+    # Step 3: Normalize
+    normalized_result = normalize_data.invoke(json.dumps(validated_data))
+    normalized_data = json.loads(normalized_result)
+
+    normalized_events = normalized_data.get("normalized_events", [])
+
+    reasoning = (
+        f"Parsed {parsed_data.get('total', 0)} events ({parsed_data.get('parse_errors', 0)} errors). "
+        f"Validated: {validated_data.get('valid_count', 0)} valid, {validated_data.get('invalid_count', 0)} invalid. "
+        f"Normalized {len(normalized_events)} events."
+    )
 
     state["normalized_events"] = normalized_events
     state["agent_reasoning"] = state.get("agent_reasoning", {})
-    state["agent_reasoning"]["ingest"] = reasoning.strip()
+    state["agent_reasoning"]["ingest"] = reasoning
     return state

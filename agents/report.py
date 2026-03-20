@@ -1,6 +1,7 @@
 """Report Agent — generates markdown incident reports with action plans."""
 
 import json
+import os
 from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
 from tools.report_tools import report_generator, action_recommender
@@ -14,8 +15,13 @@ Combine both outputs into a single comprehensive report. Add an executive summar
 highlighting the most critical findings and recommended immediate actions."""
 
 
-def create_report_agent(model_name: str = "gpt-4o-mini"):
-    llm = ChatOpenAI(model=model_name, temperature=0)
+def create_report_agent(model_name: str = "deepseek-chat"):
+    llm = ChatOpenAI(
+        model=model_name,
+        temperature=0,
+        api_key=os.environ.get("DEEPSEEK_API_KEY"),
+        base_url="https://api.deepseek.com",
+    )
     return create_react_agent(
         llm,
         tools=[report_generator, action_recommender],
@@ -24,37 +30,34 @@ def create_report_agent(model_name: str = "gpt-4o-mini"):
 
 
 def run_report(state: dict, model_name: str = "gpt-4o-mini") -> dict:
-    """Generate the final report and update state."""
-    agent = create_report_agent(model_name)
+    """Generate the final report: report_generator + action_recommender (deterministic), then LLM for executive summary."""
     incidents_json = json.dumps({"incidents": state["classifications"]})
 
-    result = agent.invoke({
-        "messages": [
-            {"role": "user", "content": f"Generate a complete incident report and action plan for these incidents:\n\n{incidents_json}"}
-        ]
-    })
+    # Step 1: Generate structured report
+    report_md = report_generator.invoke(incidents_json)
 
-    # Collect report parts from tool outputs and final AI message
-    report_parts = []
-    reasoning = ""
-    for msg in result["messages"]:
-        if hasattr(msg, "content") and isinstance(msg.content, str):
-            content = msg.content
-            # Tool outputs are the raw report/action sections
-            if hasattr(msg, "type") and msg.type == "tool":
-                if content.startswith("#") or content.startswith("##"):
-                    report_parts.append(content)
-            elif hasattr(msg, "type") and msg.type == "ai" and not hasattr(msg, "tool_calls"):
-                reasoning += content + "\n"
+    # Step 2: Generate action recommendations
+    actions_md = action_recommender.invoke(incidents_json)
 
-    # If tool outputs captured, combine them; otherwise use the last AI message
-    if report_parts:
-        state["report"] = "\n\n".join(report_parts)
-    elif reasoning.strip():
-        state["report"] = reasoning.strip()
-    else:
-        state["report"] = "No report generated."
+    # Step 3: Use LLM to write executive summary
+    llm = ChatOpenAI(
+        model=model_name,
+        temperature=0,
+        api_key=os.environ.get("DEEPSEEK_API_KEY"),
+        base_url="https://api.deepseek.com",
+    )
 
+    summary_prompt = (
+        f"Write a brief executive summary (3-5 sentences) for this security incident report. "
+        f"Focus on the most critical findings and immediate actions needed.\n\n"
+        f"Report:\n{report_md}\n\nActions:\n{actions_md}"
+    )
+    summary_result = llm.invoke(summary_prompt)
+    exec_summary = summary_result.content if hasattr(summary_result, 'content') else str(summary_result)
+
+    full_report = f"# Executive Summary\n\n{exec_summary}\n\n{report_md}\n\n{actions_md}"
+
+    state["report"] = full_report
     state["agent_reasoning"] = state.get("agent_reasoning", {})
-    state["agent_reasoning"]["report"] = reasoning.strip()
+    state["agent_reasoning"]["report"] = f"Generated structured report, action plan, and executive summary via {model_name}."
     return state

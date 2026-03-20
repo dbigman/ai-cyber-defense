@@ -17,6 +17,13 @@ KNOWN_ATTACK_SIGNATURES = {
     "wpscan", "metasploit", "cobalt strike",
 }
 
+# Sensitive file patterns for data exfiltration detection
+SENSITIVE_FILE_PATTERNS = {
+    "payroll", "salary", "ssn", "social_security", "passwd", "shadow",
+    "credit_card", "bank_account", "confidential", "secret", "private_key",
+    "employee", "hr_records", "medical", "hipaa", "pii",
+}
+
 
 @tool
 def pattern_detector(events_json: str) -> str:
@@ -131,6 +138,85 @@ def pattern_detector(events_json: str) -> str:
                 })
                 break
 
+    # --- Sensitive File Access Detection ---
+    for e in events:
+        if e.get("event_type") in ("file_access", "file_modify", "file_delete"):
+            msg = (e.get("message", "") + " " + e.get("file", "")).lower()
+            for pattern in SENSITIVE_FILE_PATTERNS:
+                if pattern in msg:
+                    sip = e.get("source_ip", "")
+                    is_external = sip in KNOWN_MALICIOUS_IPS or not (
+                        sip.startswith("10.") or sip.startswith("192.168.") or sip.startswith("172.")
+                    )
+                    severity = "critical" if is_external else "medium"
+                    threats.append({
+                        "type": "sensitive_file_access",
+                        "severity_hint": severity,
+                        "source_ip": sip,
+                        "user": e.get("user", ""),
+                        "file_pattern": pattern,
+                        "from_external_ip": is_external,
+                        "description": (
+                            f"Sensitive file access ({pattern}) by '{e.get('user', '')}' from "
+                            f"{'EXTERNAL/MALICIOUS' if is_external else 'internal'} IP {sip}: {e.get('message', '')}"
+                        ),
+                        "evidence_indices": [e.get("_index", -1)],
+                    })
+                    break
+
+    # --- Post-Exploitation Chain Detection ---
+    # Privilege escalation followed by sensitive file modifications from same IP
+    escalation_ips = set()
+    escalation_users = set()
+    for e in events:
+        if e.get("event_type") == "privilege_escalation":
+            escalation_ips.add(e.get("source_ip", ""))
+            escalation_users.add(e.get("user", ""))
+
+    post_exploit_mods = []
+    for e in events:
+        if e.get("event_type") == "file_modify" and e.get("source_ip", "") in escalation_ips:
+            msg = e.get("message", "").lower()
+            # Flag modifications to system files or from escalated sessions
+            if any(sf in msg for sf in ("/etc/passwd", "/etc/shadow", "/etc/sudoers", "/etc/ssh",
+                                         "authorized_keys", ".bashrc", "crontab", "/root/")):
+                post_exploit_mods.append(e)
+
+    if post_exploit_mods:
+        threats.append({
+            "type": "post_exploitation_chain",
+            "severity_hint": "critical",
+            "source_ips": list(escalation_ips),
+            "users": list(escalation_users),
+            "modified_files": [e.get("message", "") for e in post_exploit_mods],
+            "modification_count": len(post_exploit_mods),
+            "description": (
+                f"Post-exploitation chain: privilege escalation from {list(escalation_ips)} "
+                f"followed by {len(post_exploit_mods)} system file modifications "
+                f"({', '.join(e.get('message', '') for e in post_exploit_mods[:3])})"
+            ),
+            "evidence_indices": [e.get("_index", -1) for e in post_exploit_mods],
+        })
+
+    # --- Intrusion Attempt Detection ---
+    intrusion_by_ip = defaultdict(list)
+    for e in events:
+        if e.get("event_type") == "intrusion_attempt":
+            intrusion_by_ip[e.get("source_ip", "")].append(e)
+
+    for ip, attempts in intrusion_by_ip.items():
+        threats.append({
+            "type": "intrusion_attempt",
+            "severity_hint": "critical" if ip in KNOWN_MALICIOUS_IPS else "high",
+            "source_ip": ip,
+            "attempt_count": len(attempts),
+            "description": (
+                f"{len(attempts)} intrusion attempt(s) from {ip}: "
+                f"{', '.join(a.get('message', '')[:60] for a in attempts[:3])}"
+            ),
+            "evidence_indices": [a.get("_index", -1) for a in attempts],
+        })
+
     return json.dumps({"threats": threats, "threat_count": len(threats)})
 
 
@@ -200,10 +286,19 @@ def anomaly_detector(events_json: str) -> str:
 
     # --- Volume Spike Detection ---
     # If any single IP generates >20% of total events, flag it
+    # Skip IPs that are already explained by port scans or brute force (reduces noise)
     ip_counts = Counter(e.get("source_ip", "") for e in events)
     total = len(events)
+    # Collect IPs already flagged for port scan or brute force patterns
+    high_volume_explained_ips = set()
+    for e in events:
+        ip = e.get("source_ip", "")
+        if e.get("event_type") in ("network_connection", "port_scan", "firewall_block"):
+            high_volume_explained_ips.add(ip)
+        if e.get("event_type") in ("login_attempt", "login_failure", "authentication_failure") and e.get("status") == "failed":
+            high_volume_explained_ips.add(ip)
     for ip, count in ip_counts.items():
-        if total > 5 and count / total > 0.20:
+        if total > 5 and count / total > 0.20 and ip not in high_volume_explained_ips:
             anomalies.append({
                 "type": "volume_spike",
                 "severity_hint": "medium",

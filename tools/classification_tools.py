@@ -69,6 +69,21 @@ THREAT_CONTEXT = {
         "cve_references": [],
         "typical_response": "Immediate investigation required",
     },
+    "sensitive_file_access": {
+        "mitre_technique": "T1005 - Data from Local System / T1039 - Data from Network Shared Drive",
+        "cve_references": [],
+        "typical_response": "Verify authorization, check for data exfiltration, review DLP logs, lock account if from external IP",
+    },
+    "post_exploitation_chain": {
+        "mitre_technique": "T1548 - Abuse Elevation Control → T1003 - OS Credential Dumping → T1098 - Account Manipulation",
+        "cve_references": ["CVE-2021-4034"],
+        "typical_response": "CRITICAL: Isolate affected host immediately, revoke all credentials, forensic imaging, check for persistence mechanisms",
+    },
+    "intrusion_attempt": {
+        "mitre_technique": "T1190 - Exploit Public-Facing Application",
+        "cve_references": [],
+        "typical_response": "Block source IP, review WAF rules, check application logs for successful exploitation, patch vulnerable services",
+    },
 }
 
 
