@@ -3,3 +3,8 @@ __pycache__/
 *.pyc
 output/*.md
 .venv/
+venv/
+.DS_Store
+data/sent_alerts.json
+data/live_events.json
+data/windows_events.json
